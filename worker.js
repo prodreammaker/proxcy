@@ -302,6 +302,72 @@ function safeAsync(fn, context, onError) {
 }
 
 // ==========================
+// WebSocket Input Helpers
+// ==========================
+function decodeBase64UrlToUint8(raw) {
+  try {
+    if (typeof atob !== 'function') return new Uint8Array(0);
+    var token = String(raw || '').trim();
+    if (!token) return new Uint8Array(0);
+    token = token.replace(/-/g, '+').replace(/_/g, '/');
+    var mod = token.length % 4;
+    if (mod === 2) token += '==';
+    else if (mod === 3) token += '=';
+    else if (mod === 1) return new Uint8Array(0);
+    var bin = atob(token);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 255;
+    return out;
+  } catch (err) {
+    console.error('[decodeBase64UrlToUint8] error:', err && err.message ? err.message : String(err));
+    return new Uint8Array(0);
+  }
+}
+
+function extractWsEarlyData(request) {
+  try {
+    if (!request || !request.headers) return new Uint8Array(0);
+    var rawHeader = request.headers.get('sec-websocket-protocol') || request.headers.get('Sec-WebSocket-Protocol') || '';
+    if (!rawHeader) return new Uint8Array(0);
+    var tokens = String(rawHeader).split(',');
+    for (var i = 0; i < tokens.length; i++) {
+      var token = String(tokens[i] || '').trim();
+      if (!token) continue;
+      // Early data should be URL-safe base64 and must carry at least a VLESS header.
+      if (!/^[A-Za-z0-9\-_+=]+$/.test(token)) continue;
+      var decoded = decodeBase64UrlToUint8(token);
+      if (decoded && decoded.length >= 22) return decoded;
+    }
+    return new Uint8Array(0);
+  } catch (err) {
+    console.error('[extractWsEarlyData] error:', err && err.message ? err.message : String(err));
+    return new Uint8Array(0);
+  }
+}
+
+async function normalizeWsBinaryData(data) {
+  try {
+    if (!data) return null;
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (typeof ArrayBuffer !== 'undefined' && typeof ArrayBuffer.isView === 'function' && ArrayBuffer.isView(data)) {
+      var view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      var copy = new Uint8Array(view.length);
+      copy.set(view);
+      return copy;
+    }
+    if (typeof Blob !== 'undefined' && data instanceof Blob) {
+      var ab = await data.arrayBuffer();
+      return new Uint8Array(ab);
+    }
+    return null;
+  } catch (err) {
+    console.error('[normalizeWsBinaryData] error:', err && err.message ? err.message : String(err));
+    return null;
+  }
+}
+
+// ==========================
 // Home Page  (premium UI)
 // ==========================
 function homePage(host) {
@@ -1529,6 +1595,7 @@ async function handleVlessOverWS(request, ctx) {
     // ── Timers ────────────────────────────────────────────────────────────
     var watchdogInterval  = null;
     var heartbeatInterval = null;
+    var wsEarlyData       = extractWsEarlyData(request);
 
     // ─────────────────────────────────────────────────────────────────────
     // Watchdog — fires every 5 s
@@ -2028,23 +2095,8 @@ async function handleVlessOverWS(request, ctx) {
       }
     }
 
-    // ── WebSocket message handler ─────────────────────────────────────────
-    // Wrapped with safeAsync — any unhandled error routes to closeAll.
-    server.addEventListener('message', safeAsync(async function (event) {
-      if (sessionClosed) return;
-      if (!event || !event.data) return;
-      if (typeof event.data === 'string') return;
-      if (!(event.data instanceof ArrayBuffer)) return;
-
-      var raw;
-      try {
-        raw = new Uint8Array(event.data);
-      } catch (convErr) {
-        console.error('[ws-message] Uint8Array conversion:', convErr && convErr.message ? convErr.message : String(convErr));
-        return;
-      }
+    async function processWsBinaryFrame(raw) {
       if (!raw || raw.length === 0) return;
-
       if (mode === STATE.IDLE) {
         mode = STATE.CONNECTING;
 
@@ -2143,11 +2195,34 @@ async function handleVlessOverWS(request, ctx) {
           }
         }
       }
+    }
+
+    // ── WebSocket message handler ─────────────────────────────────────────
+    // Wrapped with safeAsync — any unhandled error routes to closeAll.
+    server.addEventListener('message', safeAsync(async function (event) {
+      if (sessionClosed) return;
+      if (!event || event.data === undefined || event.data === null) return;
+      if (typeof event.data === 'string') return;
+      var raw = await normalizeWsBinaryData(event.data);
+      if (!raw || raw.length === 0) return;
+      await processWsBinaryFrame(raw);
 
     }, 'ws-message', function (err, msg) {
       console.error('[ws-message] safeAsync caught — closing:', msg);
       try { closeAll(); } catch (e) {}
     }));
+
+    // Process early data from Sec-WebSocket-Protocol for clients that send
+    // VLESS payload before first WS message.
+    if (wsEarlyData && wsEarlyData.length > 0) {
+      safeAsync(async function () {
+        if (sessionClosed) return;
+        await processWsBinaryFrame(wsEarlyData);
+      }, 'ws-early-data', function (err, msg) {
+        console.error('[ws-early-data] safeAsync caught:', msg);
+        try { closeAll(); } catch (e) {}
+      })();
+    }
 
     // Some Workers revisions do not expose 'error' on WebSocketPair server sockets; registration can throw
     // synchronously (before safeAsync runs) → uncaught exception → Error 1101. Nested try/catch + API guard.
@@ -2308,10 +2383,12 @@ export default {
       var pathnameRaw = url.pathname || '/';
       var host     = '';
       var method   = '';
+      var methodUp = 'GET';
       var up       = '';
       try {
         host   = (request.headers && request.headers.get('Host'))    || '';
         method = request.method || '';
+        methodUp = String(method || 'GET').toUpperCase();
         up     = (request.headers && request.headers.get('Upgrade')) || '';
       } catch (hdrErr) {
         console.error('[fetch] headers error:', hdrErr && hdrErr.message ? hdrErr.message : String(hdrErr));
@@ -2362,8 +2439,32 @@ export default {
         }
       }
 
+      // Lightweight health endpoint for external monitors.
+      if ((methodUp === 'GET' || methodUp === 'HEAD') && pathname === '/health') {
+        var healthHeaders = {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store'
+        };
+        if (methodUp === 'HEAD') {
+          return new Response(null, { status: 200, headers: healthHeaders });
+        }
+        return new Response('{"ok":true,"service":"vless-ws-worker"}', { status: 200, headers: healthHeaders });
+      }
+
+      // Explicit robots response for scanners and bots.
+      if ((methodUp === 'GET' || methodUp === 'HEAD') && pathname === '/robots.txt') {
+        var robotsHeaders = {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400'
+        };
+        if (methodUp === 'HEAD') {
+          return new Response(null, { status: 200, headers: robotsHeaders });
+        }
+        return new Response('User-agent: *\nDisallow: /', { status: 200, headers: robotsHeaders });
+      }
+
       // Home page
-      if (method === 'GET' && pathname === '/') {
+      if (methodUp === 'GET' && pathname === '/') {
         try {
           return new Response(homePage(host), { status: 200, headers: HTML_HEADERS });
         } catch (e) {
