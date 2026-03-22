@@ -1,0 +1,3 @@
+# Cloudflare — used by Wrangler when you deploy from planworker-deploy
+# Paste your API token after the = (no spaces, no quotes). Save the file, then deploy.
+CLOUDFLARE_API_TOKEN=cfat_I4hwMtK8MjX40tQAyqKlqmHOOi9C1zqRp42F2AK155d4fe3e
