@@ -1,0 +1,17 @@
+{
+  "name": "proxcy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:ui": "wrangler dev --config wrangler-ui.toml",
+    "lint": "eslint .",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "eslint": "^9",
+    "globals": "^17.4.0",
+    "wrangler": "^4"
+  }
+}
