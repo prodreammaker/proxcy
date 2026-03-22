@@ -132,6 +132,56 @@ function isCloudflareIP(ip) {
   }
 }
 
+function looksLikeCloudflareHostname(hostname) {
+  try {
+    var h = String(hostname || '').toLowerCase();
+    if (!h) return false;
+    var hints = [
+      'workers.dev',
+      'pages.dev',
+      'cloudflare',
+      'cdn-cgi',
+      'cf-ipfs',
+      'trycloudflare.com'
+    ];
+    for (var i = 0; i < hints.length; i++) {
+      if (h.indexOf(hints[i]) !== -1) return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('[looksLikeCloudflareHostname] error:', err && err.message ? err.message : String(err));
+    return false;
+  }
+}
+
+var SOCKETS_CONNECT_CACHE = null;
+async function getCloudflareSocketsConnect() {
+  try {
+    if (SOCKETS_CONNECT_CACHE) return SOCKETS_CONNECT_CACHE;
+  } catch (err) {}
+  try {
+    var mod = await import('cloudflare:sockets');
+    if (mod && typeof mod.connect === 'function') {
+      SOCKETS_CONNECT_CACHE = mod.connect;
+      return SOCKETS_CONNECT_CACHE;
+    }
+  } catch (err1) {
+    console.error('[getCloudflareSocketsConnect] first import failed:', err1 && err1.message ? err1.message : String(err1));
+  }
+  try {
+    // Recovery retry path for transient module loader failures.
+    await Promise.resolve();
+    var modRetry = await import('cloudflare:sockets');
+    if (modRetry && typeof modRetry.connect === 'function') {
+      SOCKETS_CONNECT_CACHE = modRetry.connect;
+      return SOCKETS_CONNECT_CACHE;
+    }
+  } catch (err2) {
+    console.error('[getCloudflareSocketsConnect] retry import failed:', err2 && err2.message ? err2.message : String(err2));
+  }
+  return null;
+}
+
 function getRandomCleanIP() {
   try {
     var idx = Math.floor(Math.random() * CLEAN_IPS.length);
@@ -333,10 +383,10 @@ function extractWsEarlyData(request) {
     for (var i = 0; i < tokens.length; i++) {
       var token = String(tokens[i] || '').trim();
       if (!token) continue;
-      // Early data should be URL-safe base64 and must carry at least a VLESS header.
+      // Early data should be URL-safe base64.
       if (!/^[A-Za-z0-9\-_+=]+$/.test(token)) continue;
       var decoded = decodeBase64UrlToUint8(token);
-      if (decoded && decoded.length >= 22) return decoded;
+      if (decoded && decoded.length > 0 && decoded[0] === 1) return decoded;
     }
     return new Uint8Array(0);
   } catch (err) {
@@ -1169,54 +1219,54 @@ function configPage(host) {
 // ==========================
 // VLESS Protocol Parser
 // ==========================
-function parseVlessHeader(buf) {
+function parseVlessHeaderDetailed(buf) {
   try {
-    if (!buf || buf.length < 22) return null;
+    if (!buf || buf.length < 1) return { ok: false, needMore: true, reason: 'empty' };
     var offset = 0;
 
-    if (buf.length < offset + 1) return null;
+    if (buf.length < offset + 1) return { ok: false, needMore: true, reason: 'short version' };
     var version = buf[offset++];
-    if (version !== 1) return null;
+    if (version !== 1) return { ok: false, needMore: false, reason: 'bad version' };
 
-    if (buf.length < offset + 16) return null;
+    if (buf.length < offset + 16) return { ok: false, needMore: true, reason: 'short uuid' };
     var uuidBytes = buf.subarray(offset, offset + 16);
     offset += 16;
 
-    if (buf.length < offset + 1) return null;
+    if (buf.length < offset + 1) return { ok: false, needMore: true, reason: 'short optlen' };
     var optLen = buf[offset++];
-    if (optLen < 0) return null;
+    if (optLen < 0) return { ok: false, needMore: false, reason: 'bad optlen' };
 
-    if (buf.length < offset + optLen + 4) return null;
+    if (buf.length < offset + optLen + 4) return { ok: false, needMore: true, reason: 'short options' };
     offset += optLen;
 
-    if (buf.length < offset + 1) return null;
+    if (buf.length < offset + 1) return { ok: false, needMore: true, reason: 'short command' };
     var command = buf[offset++];
 
-    if (buf.length < offset + 2) return null;
+    if (buf.length < offset + 2) return { ok: false, needMore: true, reason: 'short port' };
     var port = (buf[offset] << 8) | buf[offset + 1];
     offset += 2;
-    if (port < 1 || port > 65535) return null;
+    if (port < 1 || port > 65535) return { ok: false, needMore: false, reason: 'bad port' };
 
-    if (buf.length < offset + 1) return null;
+    if (buf.length < offset + 1) return { ok: false, needMore: true, reason: 'short addr type' };
     var addrType = buf[offset++];
     var address  = '';
 
     if (addrType === 1) {
       // IPv4
-      if (buf.length < offset + 4) return null;
+      if (buf.length < offset + 4) return { ok: false, needMore: true, reason: 'short ipv4' };
       address = buf[offset] + '.' + buf[offset + 1] + '.' + buf[offset + 2] + '.' + buf[offset + 3];
       offset += 4;
     } else if (addrType === 2) {
       // Domain
-      if (buf.length < offset + 1) return null;
+      if (buf.length < offset + 1) return { ok: false, needMore: true, reason: 'short domain len' };
       var dlen = buf[offset++];
-      if (dlen < 1 || dlen > 253) return null;
-      if (buf.length < offset + dlen) return null;
+      if (dlen < 1 || dlen > 253) return { ok: false, needMore: false, reason: 'bad domain len' };
+      if (buf.length < offset + dlen) return { ok: false, needMore: true, reason: 'short domain bytes' };
       address = bytesToString(buf, offset, dlen);
       offset += dlen;
     } else if (addrType === 3) {
       // IPv6
-      if (buf.length < offset + 16) return null;
+      if (buf.length < offset + 16) return { ok: false, needMore: true, reason: 'short ipv6' };
       var parts = [];
       for (var g = 0; g < 8; g++) {
         var hi = buf[offset + g * 2];
@@ -1226,19 +1276,34 @@ function parseVlessHeader(buf) {
       offset += 16;
       address = parts.join(':');
     } else {
-      return null;
+      return { ok: false, needMore: false, reason: 'bad addr type' };
     }
 
     var payload = buf.subarray(offset);
     return {
-      version:     version,
-      uuid:        bytesToUUID(uuidBytes),
-      command:     command,
-      port:        port,
-      addressType: addrType,
-      address:     address,
-      payload:     payload
+      ok: true,
+      needMore: false,
+      header: {
+        version:     version,
+        uuid:        bytesToUUID(uuidBytes),
+        command:     command,
+        port:        port,
+        addressType: addrType,
+        address:     address,
+        payload:     payload
+      }
     };
+  } catch (err) {
+    console.error('[parseVlessHeaderDetailed] error:', err && err.message ? err.message : String(err));
+    return { ok: false, needMore: false, reason: 'exception' };
+  }
+}
+
+function parseVlessHeader(buf) {
+  try {
+    var parsed = parseVlessHeaderDetailed(buf);
+    if (!parsed || !parsed.ok) return null;
+    return parsed.header;
   } catch (err) {
     console.error('[parseVlessHeader] error:', err && err.message ? err.message : String(err));
     return null;
@@ -1536,6 +1601,8 @@ async function handleVlessOverWS(request, ctx) {
     // ── Pending WS data — buffered while CONNECTING / RETRYING ────────────
     var pendingData       = [];
     var MAX_PENDING_CHUNKS = 100;
+    var pendingDataBytes   = 0;
+    var MAX_PENDING_BYTES  = 1024 * 1024;
 
     // ── Global session flags ──────────────────────────────────────────────
     var sessionClosed  = false;
@@ -1572,7 +1639,9 @@ async function handleVlessOverWS(request, ctx) {
 
     // ── Retry / generation tracking ───────────────────────────────────────
     var candidatePorts  = [];
+    var candidateHosts  = [];
     var portIndex       = 0;
+    var hostIndex       = 0;
     var connGeneration  = 0;
     // retryLock — absolute single-threaded retry guarantee.
     // Released in finally AND outer catch — no escape paths.
@@ -1596,6 +1665,8 @@ async function handleVlessOverWS(request, ctx) {
     var watchdogInterval  = null;
     var heartbeatInterval = null;
     var wsEarlyData       = extractWsEarlyData(request);
+    var initialHeaderBuffer = new Uint8Array(0);
+    var MAX_INITIAL_HEADER_BYTES = 8192;
 
     // ─────────────────────────────────────────────────────────────────────
     // Watchdog — fires every 5 s
@@ -1763,6 +1834,52 @@ async function handleVlessOverWS(request, ctx) {
       return list;
     }
 
+    function buildHostCandidates(address, addressType) {
+      var out = [];
+      var seen = {};
+      function addHost(h) {
+        try {
+          var v = String(h || '').trim();
+          if (!v) return;
+          var key = v.toLowerCase();
+          if (seen[key]) return;
+          seen[key] = true;
+          out.push(v);
+        } catch (e) {}
+      }
+      try {
+        if (addressType === 1 && isCloudflareIP(address)) {
+          addHost(PROXYIP);
+          addHost(address);
+        } else if (addressType === 2 && looksLikeCloudflareHostname(address)) {
+          addHost(address);
+          addHost(PROXYIP);
+        } else {
+          addHost(address);
+        }
+        if (out.length === 0) addHost(PROXYIP);
+      } catch (err) {
+        console.error('[buildHostCandidates] error:', err && err.message ? err.message : String(err));
+      }
+      return out;
+    }
+
+    function appendInitialHeaderChunk(chunk) {
+      try {
+        if (!chunk || chunk.length === 0) return true;
+        if (initialHeaderBuffer.length + chunk.length > MAX_INITIAL_HEADER_BYTES) return false;
+        if (initialHeaderBuffer.length === 0) {
+          initialHeaderBuffer = new Uint8Array(chunk);
+        } else {
+          initialHeaderBuffer = concatUint8(initialHeaderBuffer, chunk);
+        }
+        return true;
+      } catch (err) {
+        console.error('[appendInitialHeaderChunk] error:', err && err.message ? err.message : String(err));
+        return false;
+      }
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // startPump — per-port remote → WS pump
     // ─────────────────────────────────────────────────────────────────────
@@ -1909,7 +2026,19 @@ async function handleVlessOverWS(request, ctx) {
         try {
           var connected = false;
 
-          while (!sessionClosed && portIndex < candidatePorts.length) {
+          while (!sessionClosed) {
+            if (hostIndex >= candidateHosts.length) break;
+            if (portIndex >= candidatePorts.length) {
+              hostIndex++;
+              if (hostIndex < candidateHosts.length) {
+                targetHostGlobal = candidateHosts[hostIndex];
+                portIndex = 0;
+                reason = 'rotate host to ' + targetHostGlobal;
+                console.log('[HOST-ROTATE] switching to', targetHostGlobal, '| reason:', reason);
+                continue;
+              }
+              break;
+            }
             // Tear down previous attempt
             releaseCurrent();
             curSocket = null; curWriter = null; curReader = null;
@@ -1924,7 +2053,7 @@ async function handleVlessOverWS(request, ctx) {
             var thisGen = connGeneration;
 
             var port = candidatePorts[portIndex++];
-            console.log('[CONNECT] port', port, '| attempt', portIndex, 'of', candidatePorts.length, '| reason:', reason);
+            console.log('[CONNECT] host', targetHostGlobal, 'port', port, '| port-attempt', portIndex, 'of', candidatePorts.length, '| host-attempt', (hostIndex + 1), 'of', candidateHosts.length, '| reason:', reason);
 
             // ── Connect ──────────────────────────────────────────────────
             var sock = null, w = null, r = null;
@@ -1940,7 +2069,7 @@ async function handleVlessOverWS(request, ctx) {
               try { if (r) r.releaseLock(); } catch (e) {}
               try { if (w) w.releaseLock(); } catch (e) {}
               try { if (sock) sock.close(); } catch (e) {}
-              reason = 'connect error port ' + port;
+              reason = 'connect error host ' + targetHostGlobal + ' port ' + port;
               continue;
             }
 
@@ -1987,13 +2116,14 @@ async function handleVlessOverWS(request, ctx) {
                 curWriterReleased = false; curReaderReleased = false; curSocketClosed = false;
               }
               delete genFailedFlags[thisGen];
-              reason = 'replay failed port ' + port;
+              reason = 'replay failed host ' + targetHostGlobal + ' port ' + port;
               continue;
             }
 
             // ── Flush pendingData accumulated during this reconnect ────────
             var pd = pendingData.slice();
             pendingData = [];
+            pendingDataBytes = 0;
 
             for (var j = 0; j < pd.length; j++) {
               if (sessionClosed) { portOk = false; break; }
@@ -2025,7 +2155,7 @@ async function handleVlessOverWS(request, ctx) {
                 curWriterReleased = false; curReaderReleased = false; curSocketClosed = false;
               }
               delete genFailedFlags[thisGen];
-              reason = 'pending flush failed port ' + port;
+              reason = 'pending flush failed host ' + targetHostGlobal + ' port ' + port;
               continue;
             }
 
@@ -2041,7 +2171,7 @@ async function handleVlessOverWS(request, ctx) {
                 curSocket = null; curWriter = null; curReader = null;
                 curWriterReleased = false; curReaderReleased = false; curSocketClosed = false;
               }
-              reason = preFailReason;
+              reason = preFailReason + ' host ' + targetHostGlobal + ' port ' + port;
               continue;
             }
 
@@ -2061,7 +2191,7 @@ async function handleVlessOverWS(request, ctx) {
           }
 
           if (!connected && !sessionClosed) {
-            console.log('[FAIL] all ports exhausted. Last reason:', reason);
+            console.log('[FAIL] all hosts/ports exhausted. Last reason:', reason);
             closeAll();
           }
 
@@ -2098,13 +2228,22 @@ async function handleVlessOverWS(request, ctx) {
     async function processWsBinaryFrame(raw) {
       if (!raw || raw.length === 0) return;
       if (mode === STATE.IDLE) {
-        mode = STATE.CONNECTING;
+        if (!appendInitialHeaderChunk(raw)) {
+          safeWsCloseSession(1009, 'header too large');
+          return;
+        }
 
-        var hdr = parseVlessHeader(raw);
-        if (!hdr) {
+        var parsed = parseVlessHeaderDetailed(initialHeaderBuffer);
+        if (!parsed || !parsed.ok) {
+          if (parsed && parsed.needMore) return;
           safeWsCloseSession(1002, 'bad header');
           return;
         }
+
+        mode = STATE.CONNECTING;
+        var hdr = parsed.header;
+        initialHeaderBuffer = new Uint8Array(0);
+
         if (!isValidUUID(hdr.uuid) || hdr.uuid.toLowerCase() !== USERID.toLowerCase()) {
           safeWsCloseSession(1008, 'auth failed');
           return;
@@ -2116,24 +2255,17 @@ async function handleVlessOverWS(request, ctx) {
           return;
         }
 
-        targetHostGlobal = hdr.address;
+        targetHostGlobal = String(hdr.address || '');
         var targetPort   = hdr.port;
-
-        if (!isUdpMode && (hdr.addressType === 1 || hdr.addressType === 2)) {
-          if (isCloudflareIP(hdr.address)) {
-            targetHostGlobal = PROXYIP;
-          }
-        }
 
         var connectFn = null;
         try {
-          var socks = await import('cloudflare:sockets');
-          if (!socks || typeof socks.connect !== 'function') {
-            console.error('[import sockets] connect function missing');
+          connectFn = await getCloudflareSocketsConnect();
+          if (!connectFn) {
+            console.error('[import sockets] connect function unavailable');
             safeWsCloseSession(1011, 'no sockets connect');
             return;
           }
-          connectFn = socks.connect;
         } catch (err) {
           console.error('[import sockets] error:', err && err.message ? err.message : String(err));
           safeWsCloseSession(1011, 'no sockets module');
@@ -2141,6 +2273,13 @@ async function handleVlessOverWS(request, ctx) {
         }
 
         connectFnGlobal = connectFn;
+        candidateHosts  = buildHostCandidates(targetHostGlobal, hdr.addressType);
+        hostIndex       = 0;
+        if (!candidateHosts || candidateHosts.length === 0) {
+          safeWsCloseSession(1011, 'no target host');
+          return;
+        }
+        targetHostGlobal = candidateHosts[0];
         candidatePorts  = buildCandidates(targetPort);
         portIndex       = 0;
 
@@ -2157,7 +2296,13 @@ async function handleVlessOverWS(request, ctx) {
           closeAll();
           return;
         }
+        if (pendingDataBytes + raw.length > MAX_PENDING_BYTES) {
+          console.error('[ws-message] pendingData bytes overflow — closing');
+          closeAll();
+          return;
+        }
         pendingData.push(raw);
+        pendingDataBytes += raw.length;
 
       } else if (mode === STATE.ACTIVE) {
         // Write validation: check writer belongs to current generation
@@ -2185,6 +2330,9 @@ async function handleVlessOverWS(request, ctx) {
           }
         } else {
           try {
+            if (!curWriter || curWriterReleased || curSocketClosed) {
+              throw new Error('writer became invalid before tcp write');
+            }
             await curWriter.write(raw);
           } catch (err) {
             console.log('[FAIL] tcp write error:', err && err.message ? err.message : String(err));
