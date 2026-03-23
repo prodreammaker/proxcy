@@ -1,8 +1,39 @@
-name = "small-thunder-6298"
-account_id = "d902b91f0f1076e0601ffd6e7b4382c0"
-main = "vless-clean.js"
-compatibility_date = "2024-01-01"
-workers_dev = true
+# ────────────────────────────────────────────────────────────────────────────
+# Serverless KV Data Management Dashboard — Wrangler configuration
+# ────────────────────────────────────────────────────────────────────────────
+#
+# SETUP STEPS
+# ──────────────────────────────────────────────────────────────────────────
+# 1. Create a KV namespace:
+#      wrangler kv:namespace create KV
+#    Then replace the placeholder id values below with the output IDs.
+#
+# 2. Create a preview namespace (used by `wrangler dev`):
+#      wrangler kv:namespace create KV --preview
+#    Replace preview_id below.
+#
+# 3. Set required secrets:
+#      wrangler secret put ADMIN_USERNAME
+#      wrangler secret put ADMIN_PASSWORD
+#
+# 4. (Optional) Set a dedicated signing secret for session tokens:
+#      wrangler secret put SESSION_SECRET
+#    If omitted, ADMIN_PASSWORD is used as the HMAC signing key.
+#
+# 5. Deploy:
+#      wrangler deploy
+# ────────────────────────────────────────────────────────────────────────────
+
+name                = "kv-dashboard"
+main                = "src/worker.js"
+compatibility_date  = "2024-09-23"
+workers_dev         = true
 
 [observability]
 enabled = true
+
+# KV namespace binding — accessible as `env.KV` inside the Worker.
+[[kv_namespaces]]
+binding    = "KV"
+id         = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_NAMESPACE_ID"
