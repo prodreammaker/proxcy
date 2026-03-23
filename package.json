@@ -2,7 +2,7 @@
   "name": "workspace",
   "version": "1.0.0",
   "description": "Production-focused Cloudflare Worker for VLESS over WebSocket with:",
-  "main": "worker-mini.js",
+  "main": "worker-mini-http.js",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

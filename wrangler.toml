@@ -1,6 +1,6 @@
-name = "testpro"
-main = "worker-mini.js"
-compatibility_date = "2026-03-22"
+name = "testpro-mini-http"
+main = "worker-mini-http.js"
+compatibility_date = "2024-11-01"
 workers_dev = true
 
 [observability]
