@@ -474,7 +474,7 @@ async function handleVlessOverWebSocket(request, config) {
     } catch (error) {}
   }
 
-  async function onMessage(event) {
+  server.addEventListener('message', async function (event) {
     if (closed || typeof event.data === 'string') return;
 
     try {
@@ -548,10 +548,6 @@ async function handleVlessOverWebSocket(request, config) {
       console.error('[mini] websocket message failed:', error.message || String(error));
       closeAll(1011, 'relay failure');
     }
-  }
-
-  server.addEventListener('message', function (event) {
-    void onMessage(event);
   });
 
   server.addEventListener('close', function () {
