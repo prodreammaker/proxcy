@@ -4,7 +4,7 @@
 
 Cloudflare Workers repository containing two projects:
 1. **VLESS-over-WebSocket Worker** – existing standalone JS files (`worker.js`, `workerui.js`, `vless-clean.js`) with no npm dependencies.
-2. **KV Data Management Dashboard** – modular ES Modules project under `src/` with `package.json` dependencies (Wrangler, ESLint, Vitest).
+2. **Secure Edge Gateway & Management Dashboard** – modular ES Modules project under `src/` with `package.json` dependencies (Wrangler, ESLint, Vitest). Integrates VLESS WebSocket proxying with a hidden admin dashboard and reverse proxy layer.
 
 ## Cursor Cloud specific instructions
 
@@ -12,16 +12,19 @@ Cloudflare Workers repository containing two projects:
 
 | Service | Command | Notes |
 |---|---|---|
-| KV Dashboard (dev) | `npm run dev` | Runs `wrangler dev -c wrangler-kv-dashboard.toml` on port 8787. Uses local KV simulation — no real Cloudflare KV namespace needed. Default login: `admin` / `changeme` (set in `wrangler-kv-dashboard.toml` `[vars]`). |
+| Edge Gateway (dev) | `npm run dev` | Runs `wrangler dev -c wrangler-kv-dashboard.toml` on port 8787. Uses local KV simulation. Admin dashboard is at `/${ADMIN_UUID}` (see `wrangler-kv-dashboard.toml` `[vars]`). Default login: `admin` / `changeme`. Root path (`/`) acts as a reverse proxy — returns 502 if upstream is unreachable in dev. |
 
 ### Lint / Test / Build
 
-- **Lint:** `npm run lint` — runs ESLint on `src/` only (existing root-level JS files are excluded via `eslint.config.js` ignores).
-- **Test:** `npm run test` — runs Vitest with `@cloudflare/vitest-pool-workers` which spins up a local Workerd runtime. All tests use the in-memory KV binding from `wrangler-kv-dashboard.toml`.
-- **Build/Deploy:** `npm run deploy` — deploys to Cloudflare (requires `CLOUDFLARE_API_TOKEN`). Not needed for local dev.
+- **Lint:** `npm run lint` — ESLint on `src/` only (root-level JS files excluded in `eslint.config.js`).
+- **Test:** `npm run test` — Vitest with `@cloudflare/vitest-pool-workers`. Tests cover auth flow, admin routing, config save, KV CRUD, and verify the admin dashboard is not exposed on public paths. Expect DNS errors for `filterjoo.ir` in test output — they're harmless (reverse proxy upstream unreachable in CI).
+- **Deploy:** `npm run deploy` — requires `CLOUDFLARE_API_TOKEN`. Not needed for local dev.
 
 ### Gotchas
 
-- The `wrangler-kv-dashboard.toml` config uses a placeholder KV namespace ID (`placeholder-kv-namespace-id`). Wrangler local dev (`--local`) creates an in-memory KV automatically, so this works fine for development. Replace with a real ID before deploying to Cloudflare.
-- The `wrangler.toml` (root) is for the original VLESS worker, **not** the KV dashboard. Always use `-c wrangler-kv-dashboard.toml` for dashboard work.
-- Tailwind CSS is loaded via CDN in the HTML templates (`src/ui-views.js`), so no build step is needed for styles.
+- The admin dashboard is **hidden** behind `/${ADMIN_UUID}`. Visiting `/` triggers the reverse proxy, NOT the login page.
+- `wrangler-kv-dashboard.toml` uses a placeholder KV namespace ID. Wrangler local dev creates in-memory KV automatically. Replace the ID before deploying to Cloudflare.
+- The `wrangler.toml` (root) is for the original VLESS worker, **not** the Edge Gateway. Always use `-c wrangler-kv-dashboard.toml`.
+- Tailwind CSS is loaded via CDN in `src/ui-views.js` — no build step for styles.
+- The VLESS WebSocket handler reads config (UUID, proxyIp) from KV at connection time. If KV has no config, it falls back to `ADMIN_UUID` from env vars.
+- Session cookies are scoped to `Path=/${ADMIN_UUID}` so they're never sent on public routes.

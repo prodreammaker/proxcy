@@ -1,5 +1,5 @@
-const COOKIE_NAME = 'kv_dash_session';
-const SESSION_TTL_SECONDS = 3600;
+const COOKIE_NAME = 'edge_gw_session';
+const SESSION_TTL_SECONDS = 86400;
 
 const encoder = new TextEncoder();
 
@@ -59,12 +59,12 @@ export async function verifySessionToken(token, secret) {
   return valid ? username : null;
 }
 
-export function setSessionCookie(token) {
-  return `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
+export function setSessionCookie(token, basePath = '/') {
+  return `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=${basePath}; Max-Age=${SESSION_TTL_SECONDS}`;
 }
 
-export function clearSessionCookie() {
-  return `${COOKIE_NAME}=deleted; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
+export function clearSessionCookie(basePath = '/') {
+  return `${COOKIE_NAME}=deleted; HttpOnly; Secure; SameSite=Strict; Path=${basePath}; Max-Age=0`;
 }
 
 export function getSessionCookie(request) {
