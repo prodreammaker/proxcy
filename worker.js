@@ -27,20 +27,11 @@
 // ==========================
 // Global Safety Net
 // ==========================
-// Last-resort unhandled rejection / error handler.
-// Prevents ANY async error from surfacing to the CF runtime (eliminates 1101).
-try {
-  addEventListener('unhandledrejection', function (ev) {
-    try {
-      var reason = ev && ev.reason;
-      console.error('[global] unhandledrejection:', reason ? String(reason) : 'unknown');
-      ev.preventDefault();
-    } catch (e) {}
-  });
-} catch (e) {}
-// Note: 'error' event is NOT part of WorkerGlobalScopeEventMap in CF Workers —
-// registering it causes TS2345. The unhandledrejection listener above is
-// sufficient to intercept all async failures. No 'error' listener needed.
+// NOTE: addEventListener('unhandledrejection') is intentionally omitted.
+// In CF Workers ES Module format, registering this listener at module scope
+// with ev.preventDefault() causes immediate startup failure (Error 1101).
+// All async boundaries are protected by safeAsync() + pumpPromise.catch()
+// + ctx.waitUntil(), which is sufficient to prevent unhandled rejections.
 
 // ==========================
 // Core Configuration
