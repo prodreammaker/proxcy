@@ -174,16 +174,21 @@ export default {
           return new Response('WS error', { status: 200 });
         }
       }
-      // Simple home page
-      var host = (request.headers.get('Host') || '');
       var path = new URL(request.url).pathname;
       if (path === '/favicon.ico') return new Response(null, { status: 204 });
-      return new Response(
-        '<!DOCTYPE html><html><head><title>VLESS Node</title></head><body style="background:#0b0d14;color:#e2e8f0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">' +
-        '<div style="text-align:center"><h1 style="color:#38bdf8">Node Online</h1><p>VLESS \u2022 WebSocket \u2022 TLS</p>' +
-        '<p style="margin-top:20px"><a href="/' + UUID + '" style="color:#38bdf8">Generate Config</a></p></div></body></html>',
-        { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-      );
+      var wh = request.headers.get('Host') || 'small-thunder-6298.amin-chinisaz.workers.dev';
+      var p = [8443,2053,2083,2087,2096];
+      var staticAddrs = ['104.16.132.'+Math.floor(Math.random()*255),
+        '104.24.'+Math.floor(Math.random()*255)+'.'+Math.floor(Math.random()*255),
+        '172.64.'+Math.floor(Math.random()*255)+'.'+Math.floor(Math.random()*255),
+        '162.158.'+Math.floor(Math.random()*255)+'.'+Math.floor(Math.random()*255),
+        'zula.ir','icook.hk'];
+      var out = ['# VLESS — Dynamic IPs (refresh for new addresses)','# SNI: '+wh,''];
+      for(var i=0;i<staticAddrs.length;i++){
+        var pt=p[Math.floor(Math.random()*p.length)];
+        out.push('vless://'+UUID+'@'+staticAddrs[i]+':'+pt+'?encryption=none&security=tls&sni='+wh+'&alpn=http%2F1.1&fp=chrome&type=ws&host='+wh+'&path=%2F%3Fed%3D2048#CF-'+(i+1));
+      }
+      return new Response(out.join('\n'), { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
     } catch(e) {
       return new Response('OK', { status: 200 });
     }
