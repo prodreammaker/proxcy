@@ -1,7 +1,9 @@
-name = "kv-data-dashboard"
+name = "small-thunder-6298"
+account_id = "d902b91f0f1076e0601ffd6e7b4382c0"
 main = "src/worker.js"
-compatibility_date = "2024-12-01"
+compatibility_date = "2025-04-01"
 workers_dev = true
+minify = true
 
 [observability]
 enabled = true

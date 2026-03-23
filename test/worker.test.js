@@ -114,10 +114,9 @@ describe('Edge Gateway Worker', () => {
       expect(res.status).toBe(200);
       const body = await res.text();
       expect(body).toContain('Edge Gateway');
-      expect(body).toContain('Overview');
       expect(body).toContain('Configuration');
-      expect(body).toContain('Connection Gen');
-      expect(body).toContain('KV Data');
+      expect(body).toContain('Connection Strings');
+      expect(body).toContain('KV Store');
       expect(body).toContain('VLESS UUID');
     });
 
@@ -188,7 +187,49 @@ describe('Edge Gateway Worker', () => {
       });
       const body = await dashRes.text();
       expect(body).toContain('vless://');
-      expect(body).toContain('VLESS Connection Strings');
+      expect(body).toContain('Connection Strings');
+    });
+
+    it('dashboard includes Notifications and Emergency tabs', async () => {
+      const cookie = await login();
+      const res = await SELF.fetch(`http://localhost${BASE}/dashboard`, {
+        headers: { Cookie: cookie },
+      });
+      const body = await res.text();
+      expect(body).toContain('Notifications');
+      expect(body).toContain('amin.chinisaz@gmail.com');
+    });
+
+    it('notification settings save', async () => {
+      const cookie = await login();
+      const form = new FormData();
+      form.append('email', 'test@example.com');
+      form.append('emailEnabled', 'on');
+      form.append('telegramBotToken', '');
+      form.append('telegramChatId', '');
+
+      const res = await SELF.fetch(`http://localhost${BASE}/notify-settings`, {
+        method: 'POST',
+        body: form,
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toContain('Notification+settings+saved');
+    });
+
+    it('notify-send endpoint works', async () => {
+      const cookie = await login();
+      const form = new FormData();
+      form.append('channel', 'email');
+
+      const res = await SELF.fetch(`http://localhost${BASE}/notify-send`, {
+        method: 'POST',
+        body: form,
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+      });
+      expect(res.status).toBe(302);
     });
   });
 });

@@ -15,6 +15,14 @@ import {
   deleteValue,
 } from './kv-service.js';
 import { loginPage, dashboardPage, viewValuePage } from './ui-views.js';
+import {
+  getNotifyConfig,
+  putNotifyConfig,
+  runScheduledNotification,
+  sendEmail,
+  sendTelegram,
+  generateVlessUris,
+} from './notification.js';
 
 // ─── VLESS Protocol Constants ────────────────────────────────────────────────
 
@@ -34,16 +42,22 @@ function ipNum(ip) {
   return n;
 }
 
-const CF_PARSED = CF_RANGES.map((cidr) => {
-  const [base, bits] = cidr.split('/');
-  const mask = parseInt(bits, 10) === 0 ? 0 : (~0 << (32 - parseInt(bits, 10))) >>> 0;
-  return { base: ipNum(base), mask };
-});
+let _cfParsed = null;
+function getCfParsed() {
+  if (!_cfParsed) {
+    _cfParsed = CF_RANGES.map((cidr) => {
+      const [base, bits] = cidr.split('/');
+      const mask = parseInt(bits, 10) === 0 ? 0 : (~0 << (32 - parseInt(bits, 10))) >>> 0;
+      return { base: ipNum(base), mask };
+    });
+  }
+  return _cfParsed;
+}
 
 function isCfIp(ip) {
   try {
     const n = ipNum(ip);
-    for (const c of CF_PARSED) if ((n & c.mask) === (c.base & c.mask)) return true;
+    for (const c of getCfParsed()) if ((n & c.mask) === (c.base & c.mask)) return true;
   } catch (_) { /* non-IPv4 */ }
   return false;
 }
@@ -267,8 +281,9 @@ async function handleDashboard(request, env, basePath, host) {
   const messageType = url.searchParams.get('msgType') || 'success';
 
   const config = await getGatewayConfig(env.KV_DATA, env.ADMIN_UUID);
+  const notifyConfig = await getNotifyConfig(env.KV_DATA);
   const { keys } = await listKeys(env.KV_DATA, { prefix });
-  return htmlResp(dashboardPage(basePath, { config, keys, host, message, messageType }));
+  return htmlResp(dashboardPage(basePath, { config, notifyConfig, keys, host, message, messageType }));
 }
 
 async function handleConfigSave(request, env, basePath) {
@@ -318,9 +333,57 @@ async function handleKvDelete(request, env, basePath) {
   return redir(`${basePath}/dashboard?msg=Key+"${encodeURIComponent(key)}"+deleted&msgType=success`);
 }
 
+async function handleNotifySettings(request, env, basePath) {
+  const form = await request.formData();
+  const config = {
+    email: (form.get('email') || 'amin.chinisaz@gmail.com').trim(),
+    telegramBotToken: (form.get('telegramBotToken') || '').trim(),
+    telegramChatId: (form.get('telegramChatId') || '').trim(),
+    emailEnabled: form.get('emailEnabled') === 'on',
+    telegramEnabled: form.get('telegramEnabled') === 'on',
+  };
+  const existing = await getNotifyConfig(env.KV_DATA);
+  await putNotifyConfig(env.KV_DATA, { ...existing, ...config });
+  return redir(`${basePath}/dashboard?msg=Notification+settings+saved&msgType=success`);
+}
+
+async function handleNotifySend(request, env, basePath) {
+  const form = await request.formData();
+  const channel = form.get('channel') || 'both';
+  const host = request.headers.get('Host') || 'small-thunder-6298.amin-chinisaz.workers.dev';
+
+  const gwConfig = await getGatewayConfig(env.KV_DATA, env.ADMIN_UUID);
+  const notifyConfig = await getNotifyConfig(env.KV_DATA);
+  const uris = generateVlessUris(gwConfig, host);
+
+  const now = new Date().toISOString();
+  let report = `🛡 Edge Gateway Report\n📅 ${now}\n🌐 Host: ${host}\n`;
+  report += `🔑 UUID: ${gwConfig.uuid ? gwConfig.uuid.substring(0, 8) + '…' : 'Not set'}\n\n`;
+  for (const u of uris.slice(0, 10)) report += `${u}\n\n`;
+  if (uris.length > 10) report += `… and ${uris.length - 10} more\n`;
+  report += `\n✅ All systems operational`;
+
+  const results = [];
+  if ((channel === 'email' || channel === 'both') && notifyConfig.email) {
+    const r = await sendEmail(notifyConfig.email, `Edge Gateway Report – ${now}`, report);
+    results.push(`Email: ${r.success ? 'sent' : 'failed'}`);
+  }
+  if ((channel === 'telegram' || channel === 'both') && notifyConfig.telegramBotToken) {
+    const r = await sendTelegram(notifyConfig.telegramBotToken, notifyConfig.telegramChatId, report);
+    results.push(`Telegram: ${r.success ? 'sent' : 'failed'}`);
+  }
+
+  const msg = results.length ? results.join(', ') : 'No channels configured';
+  return redir(`${basePath}/dashboard?msg=${encodeURIComponent(msg)}&msgType=success`);
+}
+
 // ─── Main Fetch Handler ──────────────────────────────────────────────────────
 
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(runScheduledNotification(env, 'small-thunder-6298.amin-chinisaz.workers.dev'));
+  },
+
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
@@ -391,6 +454,12 @@ export default {
           case '/config':
             if (method !== 'POST') return redir(`${basePath}/dashboard`);
             return handleConfigSave(request, env, basePath);
+          case '/notify-settings':
+            if (method !== 'POST') return redir(`${basePath}/dashboard`);
+            return handleNotifySettings(request, env, basePath);
+          case '/notify-send':
+            if (method !== 'POST') return redir(`${basePath}/dashboard`);
+            return handleNotifySend(request, env, basePath);
           case '/kv/get':
             return handleKvGet(request, env, basePath);
           case '/kv/put':

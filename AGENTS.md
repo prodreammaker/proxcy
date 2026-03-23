@@ -2,9 +2,9 @@
 
 ## Project overview
 
-Cloudflare Workers repository containing two projects:
-1. **VLESS-over-WebSocket Worker** – existing standalone JS files (`worker.js`, `workerui.js`, `vless-clean.js`) with no npm dependencies.
-2. **Secure Edge Gateway & Management Dashboard** – modular ES Modules project under `src/` with `package.json` dependencies (Wrangler, ESLint, Vitest). Integrates VLESS WebSocket proxying with a hidden admin dashboard and reverse proxy layer.
+Cloudflare Workers repository containing:
+1. **VLESS-over-WebSocket Worker** – standalone JS files (`worker.js`, `workerui.js`, `vless-clean.js`).
+2. **Secure Edge Gateway & Management Dashboard** – modular ES Modules under `src/` with VLESS proxy, admin dashboard, KV config, and dual-channel notifications (Email + Telegram).
 
 ## Cursor Cloud specific instructions
 
@@ -12,19 +12,28 @@ Cloudflare Workers repository containing two projects:
 
 | Service | Command | Notes |
 |---|---|---|
-| Edge Gateway (dev) | `npm run dev` | Runs `wrangler dev -c wrangler-kv-dashboard.toml` on port 8787. Uses local KV simulation. Admin dashboard is at `/${ADMIN_UUID}` (see `wrangler-kv-dashboard.toml` `[vars]`). Default login: `admin` / `changeme`. Root path (`/`) acts as a reverse proxy — returns 502 if upstream is unreachable in dev. |
+| Edge Gateway (dev) | `npm run dev` | Wrangler dev on port 8787. Admin at `/${ADMIN_UUID}`. Default login: `admin` / `changeme`. |
 
-### Lint / Test / Build
+### Lint / Test / Build / Deploy
 
-- **Lint:** `npm run lint` — ESLint on `src/` only (root-level JS files excluded in `eslint.config.js`).
-- **Test:** `npm run test` — Vitest with `@cloudflare/vitest-pool-workers`. Tests cover auth flow, admin routing, config save, KV CRUD, and verify the admin dashboard is not exposed on public paths. Expect DNS errors for `filterjoo.ir` in test output — they're harmless (reverse proxy upstream unreachable in CI).
-- **Deploy:** `npm run deploy` — requires `CLOUDFLARE_API_TOKEN`. Not needed for local dev.
+- **Lint:** `npm run lint`
+- **Test:** `npm run test` — 17 integration tests. DNS errors for `filterjoo.ir` are expected/harmless.
+- **Deploy (production):** `npx wrangler deploy -c wrangler-kv-dashboard.toml` — deploys to `small-thunder-6298.amin-chinisaz.workers.dev`.
 
-### Gotchas
+### Production deployment
 
-- The admin dashboard is **hidden** behind `/${ADMIN_UUID}`. Visiting `/` triggers the reverse proxy, NOT the login page.
-- `wrangler-kv-dashboard.toml` uses a placeholder KV namespace ID. Wrangler local dev creates in-memory KV automatically. Replace the ID before deploying to Cloudflare.
-- The `wrangler.toml` (root) is for the original VLESS worker, **not** the Edge Gateway. Always use `-c wrangler-kv-dashboard.toml`.
-- Tailwind CSS is loaded via CDN in `src/ui-views.js` — no build step for styles.
-- The VLESS WebSocket handler reads config (UUID, proxyIp) from KV at connection time. If KV has no config, it falls back to `ADMIN_UUID` from env vars.
-- Session cookies are scoped to `Path=/${ADMIN_UUID}` so they're never sent on public routes.
+- **Worker URL:** `https://small-thunder-6298.amin-chinisaz.workers.dev`
+- **KV Namespace ID:** `6f3cf17d2c6a433ba21c2d228069db66`
+- **Account ID:** `d902b91f0f1076e0601ffd6e7b4382c0`
+- **Admin path:** `/${ADMIN_UUID}` (value in `[vars]`)
+- **Cron trigger:** daily at 08:00 UTC — sends Email + Telegram report via `notification.js`
+
+### Critical Gotchas
+
+- `minify = true` MUST be in the wrangler toml. Without it the bundle exceeds the free-plan cold-start CPU budget and returns Error 1101.
+- CIDR parsing (`getCfParsed()`) is **lazy** — computed on first WebSocket request, not at module load. This reduces cold-start time.
+- **Never** use `wrangler delete` then recreate on the free plan — it causes hours of DNS propagation failures (1101). Use `wrangler deploy` to update in-place.
+- The admin dashboard is hidden at `/${ADMIN_UUID}`. Root `/` is a reverse proxy to `filterjoo.ir`.
+- Session cookies are scoped to `Path=/${ADMIN_UUID}`.
+- `src/notification.js` uses MailChannels API for email (requires domain SPF records for delivery) and Telegram Bot API.
+- The `wrangler.toml` at root is for the original standalone VLESS worker, not the Edge Gateway. Use `wrangler-kv-dashboard.toml`.
