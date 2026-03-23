@@ -168,7 +168,7 @@ function safeSend(ws, data) {
       ws.send(data);
     }
   } catch (err) {
-    console.error('[safeSend] ws.send error:', err.message);
+    console.error('[safeSend] ws.send error:', err && err.message ? err.message : String(err));
   }
 }
 
@@ -178,7 +178,7 @@ function safeClose(ws, code, reason) {
       ws.close(code, reason);
     }
   } catch (err) {
-    console.error('[safeClose] ws.close error:', err.message);
+    console.error('[safeClose] ws.close error:', err && err.message ? err.message : String(err));
   }
 }
 
@@ -188,7 +188,7 @@ async function safeWrite(writer, data) {
       await writer.write(data);
     }
   } catch (err) {
-    console.error('[safeWrite] writer.write error:', err.message);
+    console.error('[safeWrite] writer.write error:', err && err.message ? err.message : String(err));
     throw err; 
   }
 }
@@ -399,7 +399,7 @@ function fallbackCopyTextToClipboard(text) {
     document.execCommand('copy');
     showToast();
   } catch (err) {
-    console.error('Fallback copy failed', err);
+    console.error('Fallback copy failed', err && err.message ? err.message : String(err));
   }
   document.body.removeChild(textArea);
 }
@@ -543,7 +543,7 @@ async function pumpTcpToWs(reader, ws, closeAllCallback) {
       try {
         r = await reader.read();
       } catch (err) {
-        console.error('[pumpTcpToWs] reader.read error:', err.message);
+        console.error('[pumpTcpToWs] reader.read error:', err && err.message ? err.message : String(err));
         break;
       }
       
@@ -565,9 +565,9 @@ async function pumpTcpToWs(reader, ws, closeAllCallback) {
       }
     }
   } catch (err) {
-    console.error('[pumpTcpToWs] unexpected error:', err.message);
+    console.error('[pumpTcpToWs] unexpected error:', err && err.message ? err.message : String(err));
   } finally {
-    try { closeAllCallback(); } catch (err) { console.error('[pumpTcpToWs] closeAll error:', err.message); }
+    try { closeAllCallback(); } catch (err) { console.error('[pumpTcpToWs] closeAll error:', err && err.message ? err.message : String(err)); }
   }
 }
 
@@ -580,7 +580,7 @@ async function pumpUdpTcpToWs(reader, ws, closeAllCallback) {
       try {
         r = await reader.read();
       } catch (err) {
-        console.error('[pumpUdpTcpToWs] reader.read error:', err.message);
+        console.error('[pumpUdpTcpToWs] reader.read error:', err && err.message ? err.message : String(err));
         break;
       }
       
@@ -610,9 +610,9 @@ async function pumpUdpTcpToWs(reader, ws, closeAllCallback) {
       }
     }
   } catch (err) {
-    console.error('[pumpUdpTcpToWs] unexpected error:', err.message);
+    console.error('[pumpUdpTcpToWs] unexpected error:', err && err.message ? err.message : String(err));
   } finally {
-    try { closeAllCallback(); } catch (err) { console.error('[pumpUdpTcpToWs] closeAll error:', err.message); }
+    try { closeAllCallback(); } catch (err) { console.error('[pumpUdpTcpToWs] closeAll error:', err && err.message ? err.message : String(err)); }
   }
 }
 
@@ -633,7 +633,7 @@ async function handleVlessOverWS(request) {
     try {
       pair = new WebSocketPair();
     } catch (err) {
-      console.error('[handleVlessOverWS] WebSocketPair error:', err.message);
+      console.error('[handleVlessOverWS] WebSocketPair error:', err && err.message ? err.message : String(err));
       return new Response('WebSocket creation failed', { status: 200 });
     }
     
@@ -643,7 +643,7 @@ async function handleVlessOverWS(request) {
     try {
       server.accept();
     } catch (acErr) {
-      console.error('[handleVlessOverWS] server.accept error:', acErr.message);
+      console.error('[handleVlessOverWS] server.accept error:', acErr && acErr.message ? acErr.message : String(acErr));
       return new Response('WebSocket accept failed', { status: 200 });
     }
 
@@ -662,17 +662,17 @@ async function handleVlessOverWS(request) {
           socket.close();
         }
       } catch (err) {
-        console.error('[closeAll] socket.close error:', err.message);
+        console.error('[closeAll] socket.close error:', err && err.message ? err.message : String(err));
       }
       try {
         if (writer && typeof writer.releaseLock === 'function') writer.releaseLock();
       } catch (err) {
-        console.error('[closeAll] writer.releaseLock error:', err.message);
+        console.error('[closeAll] writer.releaseLock error:', err && err.message ? err.message : String(err));
       }
       try {
         if (reader && typeof reader.releaseLock === 'function') reader.releaseLock();
       } catch (err) {
-        console.error('[closeAll] reader.releaseLock error:', err.message);
+        console.error('[closeAll] reader.releaseLock error:', err && err.message ? err.message : String(err));
       }
       safeClose(server, 1000, 'done');
     }
@@ -717,7 +717,7 @@ async function handleVlessOverWS(request) {
             var socks = await import('cloudflare:sockets');
             connectFn = socks.connect;
           } catch (err) {
-            console.error('[import sockets] error:', err.message);
+            console.error('[import sockets] error:', err && err.message ? err.message : String(err));
             safeClose(server, 1011, 'no sockets module');
             return;
           }
@@ -732,7 +732,7 @@ async function handleVlessOverWS(request) {
                throw new Error('connectFn returned malformed socket instance');
             }
           } catch (err) {
-            console.error('[socket connect] error:', err.message);
+            console.error('[socket connect] error:', err && err.message ? err.message : String(err));
             safeClose(server, 1011, 'connect failed');
             return;
           }
@@ -740,7 +740,7 @@ async function handleVlessOverWS(request) {
           try {
             writer = socket.writable.getWriter();
           } catch (err) {
-            console.error('[getWriter] error:', err.message);
+            console.error('[getWriter] error:', err && err.message ? err.message : String(err));
             closeAll();
             return;
           }
@@ -748,7 +748,7 @@ async function handleVlessOverWS(request) {
           try {
             reader = socket.readable.getReader();
           } catch (err) {
-            console.error('[getReader] error:', err.message);
+            console.error('[getReader] error:', err && err.message ? err.message : String(err));
             closeAll();
             return;
           }
@@ -756,9 +756,15 @@ async function handleVlessOverWS(request) {
           mode = isUdp ? 'udp' : 'tcp';
 
           if (isUdp) {
-            pumpUdpTcpToWs(reader, server, closeAll);
+            pumpUdpTcpToWs(reader, server, closeAll).catch(function(e) {
+              console.error('[pump-udp] unhandled:', e && e.message ? e.message : String(e));
+              try { closeAll(); } catch (_) {}
+            });
           } else {
-            pumpTcpToWs(reader, server, closeAll);
+            pumpTcpToWs(reader, server, closeAll).catch(function(e) {
+              console.error('[pump-tcp] unhandled:', e && e.message ? e.message : String(e));
+              try { closeAll(); } catch (_) {}
+            });
           }
 
           if (hdr.payload && hdr.payload.length > 0) {
@@ -769,7 +775,7 @@ async function handleVlessOverWS(request) {
                 await safeWrite(writer, hdr.payload);
               }
             } catch (err) {
-              console.error('[initial payload] write error:', err.message);
+              console.error('[initial payload] write error:', err && err.message ? err.message : String(err));
               closeAll();
               return; 
             }
@@ -784,7 +790,7 @@ async function handleVlessOverWS(request) {
                 await safeWrite(writer, pendingData[i]);
               }
             } catch (err) {
-              console.error('[pendingData] write error:', err.message);
+              console.error('[pendingData] write error:', err && err.message ? err.message : String(err));
               closeAll();
               break;
             }
@@ -797,29 +803,29 @@ async function handleVlessOverWS(request) {
           try {
             await safeWrite(writer, raw);
           } catch (err) {
-            console.error('[tcp mode] stream write error:', err.message);
+            console.error('[tcp mode] stream write error:', err && err.message ? err.message : String(err));
             closeAll();
           }
         } else if (mode === 'udp') {
           try {
             await forwardUdpFramed(writer, raw);
           } catch (err) {
-            console.error('[udp mode] stream write error:', err.message);
+            console.error('[udp mode] stream write error:', err && err.message ? err.message : String(err));
             closeAll();
           }
         }
       } catch (err) {
-        console.error('[ws message] master catch error:', err.message);
+        console.error('[ws message] master catch error:', err && err.message ? err.message : String(err));
         closeAll();
       }
     });
 
     server.addEventListener('error', function (err) {
       try {
-        console.error('[websocket event] server error:', err.message);
+        console.error('[websocket event] server error:', err && err.message ? err.message : String(err));
         closeAll();
       } catch (e) {
-        console.error('[websocket event] error handler failed:', e.message);
+        console.error('[websocket event] error handler failed:', e && e.message ? e.message : String(e));
       }
     });
 
@@ -827,14 +833,14 @@ async function handleVlessOverWS(request) {
       try {
         closeAll();
       } catch (e) {
-        console.error('[websocket event] close handler failed:', e.message);
+        console.error('[websocket event] close handler failed:', e && e.message ? e.message : String(e));
       }
     });
 
     return new Response(null, { status: 101, webSocket: client });
 
   } catch (wsErr) {
-    console.error('[handleVlessOverWS] master catch:', wsErr.message);
+    console.error('[handleVlessOverWS] master catch:', wsErr && wsErr.message ? wsErr.message : String(wsErr));
     return new Response('Connection Failed', { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   }
 }
@@ -881,7 +887,7 @@ export default {
       return new Response(homePage(host), { status: 200, headers: HTML_HEADERS });
 
     } catch (err) {
-      console.error('[fetch] Top-level fetch error:', err.message);
+      console.error('[fetch] Top-level fetch error:', err && err.message ? err.message : String(err));
       return new Response('Safe Fallback', { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
   }
